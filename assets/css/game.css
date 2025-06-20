@@ -1,0 +1,27 @@
+/* --- Base Styles --- */
+body {
+    font-family: 'Inter', sans-serif;
+    background-color: #1a202c; /* A dark, calming color */
+}
+canvas {
+    background-color: #2d3748;
+    border-radius: 0.5rem;
+    box-shadow: 0 0 15px rgba(0,0,0,0.5);
+    display: block; /* Important for resizing */
+}
+.ui-panel {
+    background-color: rgba(45, 55, 72, 0.8);
+    backdrop-filter: blur(10px);
+    border-radius: 0.5rem;
+}
+.tower-button {
+    transition: all 0.2s ease-in-out;
+}
+.tower-button.selected {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 3px #63b3ed;
+    background-color: #4299e1;
+}
+#message-modal {
+    transition: opacity 0.3s ease-in-out;
+}
