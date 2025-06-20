@@ -82,6 +82,9 @@
                     <button id="startWaveButton" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg text-lg">
                         Start Next Wave
                     </button>
+                    <button id="speedToggleButton" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg">
+                        Normal Speed (1x)
+                    </button>
                     <button id="fullscreenButton" class="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg">
                         Go Fullscreen
                     </button>
@@ -110,6 +113,7 @@
         const comfortLevelEl = document.getElementById('comfortLevel');
         const waveEl = document.getElementById('wave');
         const startWaveButton = document.getElementById('startWaveButton');
+        const speedToggleButton = document.getElementById('speedToggleButton');
         const fullscreenButton = document.getElementById('fullscreenButton');
         const towerSelectionEl = document.getElementById('tower-selection');
         const modal = document.getElementById('message-modal');
@@ -128,6 +132,7 @@
         let gameOver = false;
         let waveInProgress = false;
         let path = [];
+        let gameSpeed = 1; // 1 for normal, 2 for fast
 
         // --- CONFIGURATION ---
         const TILE_SIZE = 50;
@@ -337,51 +342,52 @@
         }
         function update() {
             if (gameOver) return;
+            for (let speedStep = 0; speedStep < gameSpeed; speedStep++) {
+                // Update enemies
+                for (let i = enemies.length - 1; i >= 0; i--) {
+                    const enemy = enemies[i];
+                    enemy.move();
 
-            // Update enemies
-            for (let i = enemies.length - 1; i >= 0; i--) {
-                const enemy = enemies[i];
-                enemy.move();
-
-                if (enemy.x > canvas.width) {
-                    comfortLevel--;
-                    enemies.splice(i, 1);
-                    if (comfortLevel <= 0) {
-                        comfortLevel = 0;
-                        gameOver = true;
-                        showModal("Overwhelmed!", "Your comfort level dropped to zero. You had to retreat home early.");
-                    }
-                }
-            }
-
-            // Update towers
-            towers.forEach(tower => tower.update());
-
-            // Update projectiles
-            for (let i = projectiles.length - 1; i >= 0; i--) {
-                const p = projectiles[i];
-                p.move();
-
-                // Cleanup projectiles that are off-screen or whose target is gone
-                if (p.x < 0 || !p.target || p.target.health <= 0) {
-                    projectiles.splice(i, 1);
-                    continue;
-                }
-
-                if (getDistance(p, p.target) < p.radius + 5) { // Hit detection
-                    p.target.health -= p.damage;
-                    if (p.target.health <= 0) {
-                        let enemyIndex = enemies.indexOf(p.target);
-                        if (enemyIndex > -1) {
-                            enemies.splice(enemyIndex, 1);
-                            socialEnergy += 5; // Reward
+                    if (enemy.x > canvas.width) {
+                        comfortLevel--;
+                        enemies.splice(i, 1);
+                        if (comfortLevel <= 0) {
+                            comfortLevel = 0;
+                            gameOver = true;
+                            showModal("Overwhelmed!", "Your comfort level dropped to zero. You had to retreat home early.");
                         }
                     }
-                    projectiles.splice(i, 1);
+                }
+
+                // Update towers
+                towers.forEach(tower => tower.update());
+
+                // Update projectiles
+                for (let i = projectiles.length - 1; i >= 0; i--) {
+                    const p = projectiles[i];
+                    p.move();
+
+                    // Cleanup projectiles that are off-screen or whose target is gone
+                    if (p.x < 0 || !p.target || p.target.health <= 0) {
+                        projectiles.splice(i, 1);
+                        continue;
+                    }
+
+                    if (getDistance(p, p.target) < p.radius + 5) { // Hit detection
+                        p.target.health -= p.damage;
+                        if (p.target.health <= 0) {
+                            let enemyIndex = enemies.indexOf(p.target);
+                            if (enemyIndex > -1) {
+                                enemies.splice(enemyIndex, 1);
+                                socialEnergy += 5; // Reward
+                            }
+                        }
+                        projectiles.splice(i, 1);
+                    }
                 }
             }
 
-            // Check if wave is over
+            // Check if wave is over (outside speed loop)
             if(waveInProgress && enemies.length === 0) {
                 waveInProgress = false;
                 startWaveButton.disabled = false;
@@ -546,12 +552,19 @@
                 spawnWave();
             }
         });
+        speedToggleButton.addEventListener('click', () => {
+            gameSpeed = gameSpeed === 1 ? 2 : 1;
+            speedToggleButton.textContent = `${gameSpeed === 1 ? 'Normal' : 'Fast'} Speed (${gameSpeed}x)`;
+            speedToggleButton.classList.toggle('bg-purple-600', gameSpeed === 1);
+            speedToggleButton.classList.toggle('bg-purple-800', gameSpeed === 2);
+        });
         function showModal(title, text) {
             modalTitle.textContent = title;
             modalText.textContent = text;
             modal.classList.remove('hidden');
             modal.classList.add('flex');
         }
+        // Update resetGame to reset speed
         function resetGame() {
             socialEnergy = 100;
             comfortLevel = 10;
@@ -561,6 +574,11 @@
             projectiles = [];
             gameOver = false;
             waveInProgress = false;
+
+            gameSpeed = 1;
+            speedToggleButton.textContent = 'Normal Speed (1x)';
+            speedToggleButton.classList.add('bg-purple-600');
+            speedToggleButton.classList.remove('bg-purple-800');
 
             startWaveButton.disabled = false;
             startWaveButton.classList.remove('opacity-50', 'cursor-not-allowed');
