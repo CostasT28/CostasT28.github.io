@@ -1,0 +1,493 @@
+window.onload = function() {
+// --- DOM ELEMENTS ---
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const socialEnergyEl = document.getElementById('socialEnergy');
+const comfortLevelEl = document.getElementById('comfortLevel');
+const waveEl = document.getElementById('wave');
+const startWaveButton = document.getElementById('startWaveButton');
+const speedToggleButton = document.getElementById('speedToggleButton');
+const fullscreenButton = document.getElementById('fullscreenButton');
+const towerSelectionEl = document.getElementById('tower-selection');
+const modal = document.getElementById('message-modal');
+const modalTitle = document.getElementById('message-title');
+const modalText = document.getElementById('message-text');
+const restartButton = document.getElementById('restart-button');
+
+// --- GAME STATE ---
+let socialEnergy = 100;
+let comfortLevel = 10;
+let wave = 0;
+let selectedTower = null;
+let towers = [];
+let enemies = [];
+let projectiles = [];
+let gameOver = false;
+let waveInProgress = false;
+let path = [];
+let gameSpeed = 1; // 1 for normal, 2 for fast
+
+// --- CONFIGURATION ---
+const TILE_SIZE = 50;
+const TOWER_TYPES = {
+    'Phone Check': { cost: 50, range: 120, damage: 1, fireRate: 30, color: '#3182ce', projectileColor: '#a0deff', description: 'Low dmg, fast fire rate' },
+    'Awkward Joke': { cost: 100, range: 150, damage: 5, fireRate: 80, color: '#d69e2e', projectileColor: '#feeeb5', description: 'High dmg, slow fire rate' },
+    'Headphones': { cost: 75, range: 90, damage: 0.5, fireRate: 10, color: '#9f7aea', projectileColor: '#e9d8fd', description: 'AoE, rapid but weak' }
+};
+const WAVES = [
+    [], // Wave 0 placeholder
+    { count: 5, health: 10, speed: 1, type: 'Small Talk' },
+    { count: 8, health: 10, speed: 1.2, type: 'Small Talk' },
+    { count: 10, health: 15, speed: 1, type: 'Group Chat Notification' },
+    { count: 1, health: 100, speed: 0.8, type: 'Surprise Party' },
+    { count: 15, health: 20, speed: 1.5, type: 'Networking Event' },
+    { count: 5, health: 150, speed: 0.7, type: 'Public Speaking Gig' },
+];
+
+// --- UTILITY FUNCTIONS ---
+function updatePath() {
+    // Path is now relative to canvas size
+    const w = canvas.width;
+    const h = canvas.height;
+    const y1 = Math.floor(h / TILE_SIZE / 4) * TILE_SIZE + TILE_SIZE / 2;
+    const x1 = Math.floor(w / TILE_SIZE / 3) * TILE_SIZE + TILE_SIZE / 2;
+    const y2 = Math.floor(h / TILE_SIZE * 0.7) * TILE_SIZE + TILE_SIZE / 2;
+    const x2 = Math.floor(w / TILE_SIZE * 0.75) * TILE_SIZE + TILE_SIZE / 2;
+    const y3 = Math.floor(h / TILE_SIZE / 5) * TILE_SIZE + TILE_SIZE / 2;
+
+    path = [
+        { x: -TILE_SIZE, y: y1 },
+        { x: x1, y: y1 },
+        { x: x1, y: y2 },
+        { x: x2, y: y2 },
+        { x: x2, y: y3 },
+        { x: w + TILE_SIZE, y: y3 }
+    ];
+}
+function resizeCanvas() {
+    const container = canvas.parentElement;
+    let size = container.clientWidth;
+
+    // Ensure canvas dimensions are multiples of TILE_SIZE for a clean grid
+    canvas.width = Math.floor(size / TILE_SIZE) * TILE_SIZE;
+    canvas.height = Math.floor(canvas.width * 0.75 / TILE_SIZE) * TILE_SIZE; // Maintain aspect ratio
+
+    updatePath(); // Recalculate path on resize
+    draw(); // Redraw everything after resize
+}
+function getDistance(obj1, obj2) {
+    const dx = obj1.x - obj2.x;
+    const dy = obj1.y - obj2.y;
+    return Math.sqrt(dx * dx + dy * dy);
+}
+
+// --- CLASSES ---
+class Enemy {
+    constructor(health, speed, type) {
+        this.x = path[0].x;
+        this.y = path[0].y;
+        this.maxHealth = health;
+        this.health = health;
+        this.speed = speed;
+        this.type = type;
+        this.pathIndex = 1;
+        this.radius = 15;
+        this.color = '#e53e3e'; // Red for enemies
+    }
+    move() {
+        if (this.pathIndex >= path.length) return;
+
+        const target = path[this.pathIndex];
+        const angle = Math.atan2(target.y - this.y, target.x - this.x);
+        this.x += Math.cos(angle) * this.speed;
+        this.y += Math.sin(angle) * this.speed;
+
+        if (getDistance(this, target) < this.speed) {
+            this.pathIndex++;
+        }
+    }
+    draw() {
+        // Main body
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Health bar
+        const healthBarWidth = this.radius * 2;
+        const healthBarHeight = 5;
+        ctx.fillStyle = '#4a5568';
+        ctx.fillRect(this.x - this.radius, this.y - this.radius - 10, healthBarWidth, healthBarHeight);
+        ctx.fillStyle = '#48bb78';
+        ctx.fillRect(this.x - this.radius, this.y - this.radius - 10, healthBarWidth * (this.health / this.maxHealth), healthBarHeight);
+    }
+}
+class Tower {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.config = TOWER_TYPES[type];
+        this.type = type;
+        this.range = this.config.range;
+        this.damage = this.config.damage;
+        this.fireRate = this.config.fireRate;
+        this.color = this.config.color;
+        this.projectileColor = this.config.projectileColor;
+        this.size = TILE_SIZE * 0.8;
+        this.fireCooldown = 0;
+    }
+    findTarget() {
+        for (let enemy of enemies) {
+            if (getDistance(this, enemy) < this.range) {
+                return enemy;
+            }
+        }
+        return null;
+    }
+    shoot(target) {
+        if (this.fireCooldown <= 0) {
+            projectiles.push(new Projectile(this.x, this.y, target, this.damage, this.projectileColor));
+            this.fireCooldown = this.fireRate;
+        }
+    }
+    update() {
+        if (this.fireCooldown > 0) {
+            this.fireCooldown--;
+        }
+        const target = this.findTarget();
+        if (target) {
+            this.shoot(target);
+        }
+    }
+    draw() {
+        // Draw range circle when placing a new tower
+        if (selectedTower && selectedTower.type === this.type) {
+            // Get mouse position relative to canvas
+            const rect = canvas.getBoundingClientRect();
+            const snappedX = Math.floor((mouse.x - rect.left) / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2;
+            const snappedY = Math.floor((mouse.y - rect.top) / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2;
+            if(this.x === snappedX && this.y === snappedY) {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.range, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.stroke();
+            }
+        }
+        ctx.fillStyle = this.color;
+        ctx.fillRect(this.x - this.size / 2, this.y - this.size / 2, this.size, this.size);
+        ctx.strokeStyle = '#1a202c';
+        ctx.strokeRect(this.x - this.size / 2, this.y - this.size / 2, this.size, this.size);
+    }
+}
+class Projectile {
+    constructor(x, y, target, damage, color) {
+        this.x = x;
+        this.y = y;
+        this.target = target;
+        this.damage = damage;
+        this.color = color;
+        this.speed = 5;
+        this.radius = 5;
+    }
+    move() {
+        if (!this.target || this.target.health <= 0) {
+            // Invalidate projectile by moving it off-screen for cleanup
+            this.x = -100; 
+            return;
+        }
+        const angle = Math.atan2(this.target.y - this.y, this.target.x - this.x);
+        this.x += Math.cos(angle) * this.speed;
+        this.y += Math.sin(angle) * this.speed;
+    }
+    draw() {
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
+// --- GAME LOGIC ---
+function spawnWave() {
+    if (wave + 1 >= WAVES.length) {
+        showModal("You've Survived!", "You navigated all social events and made it home. Time to recharge.");
+        gameOver = true;
+        return;
+    }
+    wave++;
+    waveInProgress = true;
+    startWaveButton.disabled = true;
+    startWaveButton.classList.add('opacity-50', 'cursor-not-allowed');
+
+    const waveConfig = WAVES[wave];
+    let enemiesToSpawn = waveConfig.count;
+
+    const spawnInterval = setInterval(() => {
+        if (enemiesToSpawn > 0 && !gameOver) {
+            enemies.push(new Enemy(waveConfig.health, waveConfig.speed, waveConfig.type));
+            enemiesToSpawn--;
+        } else {
+            clearInterval(spawnInterval);
+        }
+    }, 1000);
+}
+function update() {
+    if (gameOver) return;
+    for (let speedStep = 0; speedStep < gameSpeed; speedStep++) {
+        // Update enemies
+        for (let i = enemies.length - 1; i >= 0; i--) {
+            const enemy = enemies[i];
+            enemy.move();
+
+            if (enemy.x > canvas.width) {
+                comfortLevel--;
+                enemies.splice(i, 1);
+                if (comfortLevel <= 0) {
+                    comfortLevel = 0;
+                    gameOver = true;
+                    showModal("Overwhelmed!", "Your comfort level dropped to zero. You had to retreat home early.");
+                }
+            }
+        }
+
+        // Update towers
+        towers.forEach(tower => tower.update());
+
+        // Update projectiles
+        for (let i = projectiles.length - 1; i >= 0; i--) {
+            const p = projectiles[i];
+            p.move();
+
+            // Cleanup projectiles that are off-screen or whose target is gone
+            if (p.x < 0 || !p.target || p.target.health <= 0) {
+                projectiles.splice(i, 1);
+                continue;
+            }
+
+            if (getDistance(p, p.target) < p.radius + 5) { // Hit detection
+                p.target.health -= p.damage;
+                if (p.target.health <= 0) {
+                    let enemyIndex = enemies.indexOf(p.target);
+                    if (enemyIndex > -1) {
+                        enemies.splice(enemyIndex, 1);
+                        socialEnergy += 5; // Reward
+                    }
+                }
+                projectiles.splice(i, 1);
+            }
+        }
+    }
+
+    // Check if wave is over (outside speed loop)
+    if(waveInProgress && enemies.length === 0) {
+        waveInProgress = false;
+        startWaveButton.disabled = false;
+        startWaveButton.classList.remove('opacity-50', 'cursor-not-allowed');
+        socialEnergy += 50 + wave * 10; // End of wave bonus
+    }
+
+    updateUI();
+}
+
+// --- DRAWING ---
+function drawPath() {
+    if (path.length < 2) return;
+    ctx.strokeStyle = '#4a5568';
+    ctx.lineWidth = TILE_SIZE * 0.6;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(path[0].x, path[0].y);
+    for (let i = 1; i < path.length; i++) {
+        ctx.lineTo(path[i].x, path[i].y);
+    }
+    ctx.stroke();
+    ctx.lineWidth = 1;
+}
+function drawGrid() {
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+    for (let x = 0; x < canvas.width; x += TILE_SIZE) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, canvas.height);
+        ctx.stroke();
+    }
+    for (let y = 0; y < canvas.height; y += TILE_SIZE) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(canvas.width, y);
+        ctx.stroke();
+    }
+}
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawPath();
+    drawGrid();
+
+    towers.forEach(tower => tower.draw());
+
+    if (selectedTower) {
+        drawTowerPlacementPreview();
+    }
+
+    enemies.forEach(enemy => enemy.draw());
+    projectiles.forEach(p => p.draw());
+}
+function gameLoop() {
+    if (!gameOver) {
+        update();
+        draw();
+        requestAnimationFrame(gameLoop);
+    }
+}
+
+// --- UI & INTERACTION ---
+function updateUI() {
+    socialEnergyEl.textContent = socialEnergy;
+    comfortLevelEl.textContent = comfortLevel;
+    waveEl.textContent = wave;
+}
+function createTowerButtons() {
+    towerSelectionEl.innerHTML = '<h2 class="text-xl font-bold text-center text-blue-200 mb-2">Avoidance Tactics</h2>'; // Clear previous buttons
+    for (const name in TOWER_TYPES) {
+        const config = TOWER_TYPES[name];
+        const button = document.createElement('button');
+        button.className = 'tower-button w-full bg-blue-800 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg border-2 border-transparent';
+        button.innerHTML = `
+            <div class="flex justify-between items-center">
+                <span>${name}</span>
+                <span class="text-yellow-300">$${config.cost}</span>
+            </div>
+            <div class="text-xs text-blue-200 text-left mt-1">${config.description}</div>
+        `;
+        button.onclick = () => selectTower(name, button);
+        towerSelectionEl.appendChild(button);
+    }
+}
+let mouse = { x: 0, y: 0 };
+document.addEventListener('mousemove', (e) => {
+    // Get mouse position relative to page
+    mouse.x = e.clientX;
+    mouse.y = e.clientY;
+});
+function selectTower(towerName, buttonEl) {
+    if (selectedTower && selectedTower.type === towerName) {
+        selectedTower = null;
+        document.querySelectorAll('.tower-button').forEach(b => b.classList.remove('selected'));
+    } else {
+        const config = TOWER_TYPES[towerName];
+        if (socialEnergy >= config.cost) {
+            selectedTower = { type: towerName, config: config };
+            document.querySelectorAll('.tower-button').forEach(b => b.classList.remove('selected'));
+            buttonEl.classList.add('selected');
+        }
+    }
+}
+function drawTowerPlacementPreview() {
+    const rect = canvas.getBoundingClientRect();
+    const snappedX = Math.floor((mouse.x - rect.left) / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2;
+    const snappedY = Math.floor((mouse.y - rect.top) / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2;
+
+    // Draw range preview
+    ctx.beginPath();
+    ctx.arc(snappedX, snappedY, selectedTower.config.range, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+    ctx.fill();
+
+    // Draw tower preview
+    ctx.globalAlpha = 0.6;
+    ctx.fillStyle = selectedTower.config.color;
+    const size = TILE_SIZE * 0.8;
+    ctx.fillRect(snappedX - size / 2, snappedY - size / 2, size, size);
+    ctx.globalAlpha = 1.0;
+}
+canvas.addEventListener('click', (e) => {
+    if (selectedTower) {
+        const rect = canvas.getBoundingClientRect();
+        const snappedX = Math.floor((e.clientX - rect.left) / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2;
+        const snappedY = Math.floor((e.clientY - rect.top) / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2;
+
+        // Basic check to prevent placing on path (can be improved)
+        let onPath = false;
+        for(let i=0; i < path.length-1; i++){
+            const p1 = path[i];
+            const p2 = path[i+1];
+            // simple bounding box check
+            if(snappedX > Math.min(p1.x, p2.x) - TILE_SIZE/2 && snappedX < Math.max(p1.x, p2.x) + TILE_SIZE/2 &&
+               snappedY > Math.min(p1.y, p2.y) - TILE_SIZE/2 && snappedY < Math.max(p1.y, p2.y) + TILE_SIZE/2) {
+                onPath = true;
+                break;
+            }
+        }
+
+        if(!onPath && socialEnergy >= selectedTower.config.cost) {
+            socialEnergy -= selectedTower.config.cost;
+            towers.push(new Tower(snappedX, snappedY, selectedTower.type));
+            updateUI();
+            selectedTower = null; // Deselect after placing
+            document.querySelectorAll('.tower-button').forEach(b => b.classList.remove('selected'));
+        }
+    }
+});
+fullscreenButton.addEventListener('click', () => {
+    if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen();
+    } else {
+        if (document.exitFullscreen) {
+            document.exitFullscreen();
+        }
+    }
+});
+startWaveButton.addEventListener('click', () => {
+    if (!waveInProgress) {
+        spawnWave();
+    }
+});
+speedToggleButton.addEventListener('click', () => {
+    gameSpeed = gameSpeed === 1 ? 2 : 1;
+    speedToggleButton.textContent = `${gameSpeed === 1 ? 'Normal' : 'Fast'} Speed (${gameSpeed}x)`;
+    speedToggleButton.classList.toggle('bg-purple-600', gameSpeed === 1);
+    speedToggleButton.classList.toggle('bg-purple-800', gameSpeed === 2);
+});
+function showModal(title, text) {
+    modalTitle.textContent = title;
+    modalText.textContent = text;
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+}
+// Update resetGame to reset speed
+function resetGame() {
+    socialEnergy = 100;
+    comfortLevel = 10;
+    wave = 0;
+    towers = [];
+    enemies = [];
+    projectiles = [];
+    gameOver = false;
+    waveInProgress = false;
+
+    gameSpeed = 1;
+    speedToggleButton.textContent = 'Normal Speed (1x)';
+    speedToggleButton.classList.add('bg-purple-600');
+    speedToggleButton.classList.remove('bg-purple-800');
+
+    startWaveButton.disabled = false;
+    startWaveButton.classList.remove('opacity-50', 'cursor-not-allowed');
+
+    updateUI();
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+    gameLoop();
+}
+restartButton.addEventListener('click', resetGame);
+
+// --- INITIALIZE ---
+window.addEventListener('resize', resizeCanvas, false);
+document.addEventListener('fullscreenchange', resizeCanvas, false);
+createTowerButtons();
+resizeCanvas();
+updateUI();
+gameLoop();
+};
