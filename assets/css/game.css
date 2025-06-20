@@ -8,6 +8,8 @@ canvas {
     border-radius: 0.5rem;
     box-shadow: 0 0 15px rgba(0,0,0,0.5);
     display: block; /* Important for resizing */
+    min-width: 400px;
+    min-height: 300px;
 }
 .ui-panel {
     background-color: rgba(45, 55, 72, 0.8);
@@ -24,4 +26,14 @@ canvas {
 }
 #message-modal {
     transition: opacity 0.3s ease-in-out;
+}
+.flex-grow {
+  min-width: 400px;
+}
+#gameCanvas {
+  min-width: 400px;
+  min-height: 300px;
+}
+#tower-selection {
+  min-height: 200px;
 }
