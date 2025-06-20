@@ -168,6 +168,30 @@ window.onload = function() {
             this.projectileColor = this.config.projectileColor;
             this.size = TILE_SIZE * 0.8;
             this.fireCooldown = 0;
+            this.upgradeLevel = 0;
+            this.maxUpgrades = 2;
+            this.baseCost = this.config.cost;
+            this._upgradeFlash = 0; // for button flash
+        }
+        canUpgrade() {
+            return this.upgradeLevel < this.maxUpgrades;
+        }
+        upgrade() {
+            if (!this.canUpgrade()) return false;
+            this.upgradeLevel++;
+            // Example: +20% range, +40% damage, -15% fireRate per upgrade
+            this.range = Math.round(this.range * 1.2);
+            this.damage = Math.round(this.damage * 1.4 * 10) / 10;
+            this.fireRate = Math.max(5, Math.round(this.fireRate * 0.85));
+            this.upgradeFlash = 12; // 12 frames of flash
+            return true;
+        }
+        sell() {
+            // Refund 70% of total cost (base + upgrades)
+            let refund = Math.round((this.baseCost + this.upgradeLevel * (this.baseCost * 0.6)) * 0.7);
+            socialEnergy += refund;
+            towers = towers.filter(t => t !== this);
+            updateUI();
         }
         findTarget() {
             for (let enemy of enemies) {
@@ -187,12 +211,37 @@ window.onload = function() {
             if (this.fireCooldown > 0) {
                 this.fireCooldown--;
             }
+            if (this.upgradeFlash > 0) {
+                this.upgradeFlash--;
+            }
             const target = this.findTarget();
             if (target) {
                 this.shoot(target);
             }
         }
         draw() {
+            // --- Draw tower shape based on level ---
+            let shape = this.upgradeLevel === 0 ? 'square' : (this.upgradeLevel === 1 ? 'rounded' : 'circle');
+            ctx.save();
+            ctx.fillStyle = this.color;
+            if (shape === 'square') {
+                ctx.fillRect(this.x - this.size / 2, this.y - this.size / 2, this.size, this.size);
+                ctx.strokeStyle = '#1a202c';
+                ctx.strokeRect(this.x - this.size / 2, this.y - this.size / 2, this.size, this.size);
+            } else if (shape === 'rounded') {
+                ctx.beginPath();
+                ctx.roundRect(this.x - this.size / 2, this.y - this.size / 2, this.size, this.size, 12);
+                ctx.fill();
+                ctx.strokeStyle = '#1a202c';
+                ctx.stroke();
+            } else if (shape === 'circle') {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size / 2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#1a202c';
+                ctx.stroke();
+            }
+            ctx.restore();
             // Draw range circle when placing a new tower
             if (selectedTower && selectedTower.type === this.type) {
                 // Get mouse position relative to canvas
@@ -208,10 +257,6 @@ window.onload = function() {
                     ctx.stroke();
                 }
             }
-            ctx.fillStyle = this.color;
-            ctx.fillRect(this.x - this.size / 2, this.y - this.size / 2, this.size, this.size);
-            ctx.strokeStyle = '#1a202c';
-            ctx.strokeRect(this.x - this.size / 2, this.y - this.size / 2, this.size, this.size);
         }
     }
     class Projectile {
@@ -358,15 +403,13 @@ window.onload = function() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         drawPath();
         drawGrid();
-
         towers.forEach(tower => tower.draw());
-
         if (selectedTower) {
             drawTowerPlacementPreview();
         }
-
         enemies.forEach(enemy => enemy.draw());
         projectiles.forEach(p => p.draw());
+        drawTowerUpgradeUI();
     }
     function gameLoop() {
         if (!gameOver) {
@@ -438,34 +481,182 @@ window.onload = function() {
         ctx.fillRect(snappedX - size / 2, snappedY - size / 2, size, size);
         ctx.globalAlpha = 1.0;
     }
-    canvas.addEventListener('click', (e) => {
-        if (selectedTower) {
-            const rect = canvas.getBoundingClientRect();
-            const snappedX = Math.floor((e.clientX - rect.left) / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2;
-            const snappedY = Math.floor((e.clientY - rect.top) / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2;
+    let selectedTowerInstance = null; // For selecting placed towers
 
-            // Basic check to prevent placing on path (can be improved)
+    // REMOVE the entire canvas.addEventListener('click', ...) block
+
+    function drawTowerUpgradeUI() {
+        if (!selectedTowerInstance) return;
+        const x = selectedTowerInstance.x;
+        const y = selectedTowerInstance.y - selectedTowerInstance.size / 2 - 10;
+        ctx.save();
+        // --- Draw range circle for selected tower ---
+        ctx.beginPath();
+        ctx.arc(selectedTowerInstance.x, selectedTowerInstance.y, selectedTowerInstance.range, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.08)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.lineWidth = 1;
+        // Draw shadowed rounded panel
+        ctx.globalAlpha = 1;
+        ctx.shadowColor = 'rgba(0,0,0,0.35)';
+        ctx.shadowBlur = 10;
+        ctx.fillStyle = 'rgba(30, 41, 59, 0.97)';
+        ctx.beginPath();
+        ctx.moveTo(x - 60, y - 60);
+        ctx.arcTo(x + 60, y - 60, x + 60, y + 36, 16);
+        ctx.arcTo(x + 60, y + 36, x - 60, y + 36, 16);
+        ctx.arcTo(x - 60, y + 36, x - 60, y - 60, 16);
+        ctx.arcTo(x - 60, y - 60, x + 60, y - 60, 16);
+        ctx.closePath();
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        // --- Upgrade button flash effect (fixed alignment, more obvious) ---
+        let upgradeBtnColor = selectedTowerInstance.canUpgrade() ? '#38a169' : '#718096';
+        let flashDuration = 700; // ms
+        if (selectedTowerInstance._upgradeFlash && Date.now() - selectedTowerInstance._upgradeFlash < flashDuration) {
+            // Animate flash: scale and color overlay, aligned to button
+            let t = (Date.now() - selectedTowerInstance._upgradeFlash) / flashDuration;
+            let scale = 1 + 0.32 * (1 - t); // more scale
+            let alpha = 0.85 * (1 - t);
+            ctx.save();
+            ctx.translate(x, y - 50 + 16); // center of button
+            ctx.scale(scale, scale);
+            ctx.beginPath();
+            ctx.roundRect(-50, -16, 100, 32, 8);
+            ctx.fillStyle = 'rgba(255, 255, 0, ' + alpha.toFixed(2) + ')'; // bright yellow
+            ctx.shadowColor = 'rgba(255,255,0,0.7)';
+            ctx.shadowBlur = 18 * (1 - t);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            ctx.lineWidth = 4 + 8 * (1 - t); // border pulse
+            ctx.strokeStyle = 'rgba(255,255,255,' + (0.7 * (1 - t)).toFixed(2) + ')';
+            ctx.stroke();
+            ctx.restore();
+        }
+        ctx.fillStyle = upgradeBtnColor;
+        ctx.beginPath();
+        ctx.roundRect(x - 50, y - 50, 100, 32, 8);
+        ctx.fill();
+        // Fit text in button
+        let upgradeText = selectedTowerInstance.canUpgrade() ? `Upgrade ($${Math.round(selectedTowerInstance.baseCost*0.6)})` : 'Maxed';
+        let fontSize = 15;
+        ctx.font = `bold ${fontSize}px Inter, sans-serif`;
+        while (ctx.measureText(upgradeText).width > 90 && fontSize > 10) {
+            fontSize--;
+            ctx.font = `bold ${fontSize}px Inter, sans-serif`;
+        }
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'center';
+        ctx.fillText(upgradeText, x, y - 28);
+        // Sell button
+        ctx.fillStyle = '#e53e3e';
+        ctx.beginPath();
+        ctx.roundRect(x - 50, y - 10, 100, 32, 8);
+        ctx.fill();
+        ctx.font = 'bold 15px Inter, sans-serif';
+        ctx.fillStyle = '#fff';
+        ctx.fillText('Sell', x, y + 12);
+        ctx.restore();
+    }
+
+    // Improved menu click handling: menu always has priority when open
+    let menuClickHandled = false;
+    let justPlacedTower = false;
+
+    canvas.addEventListener('mousedown', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const snappedX = Math.floor(mx / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2;
+        const snappedY = Math.floor(my / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2;
+
+        // --- MENU HANDLING ---
+        if (selectedTowerInstance) {
+            const x = selectedTowerInstance.x;
+            const y = selectedTowerInstance.y - selectedTowerInstance.size / 2 - 10;
+            // Check if click is inside the menu panel
+            if (mx > x - 60 && mx < x + 60 && my > y - 60 && my < y + 36) {
+                // Upgrade button area
+                if (mx > x - 50 && mx < x + 50 && my > y - 50 && my < y - 18) {
+                    if (selectedTowerInstance.canUpgrade() && socialEnergy >= Math.round(selectedTowerInstance.baseCost*0.6)) {
+                        socialEnergy -= Math.round(selectedTowerInstance.baseCost*0.6);
+                        selectedTowerInstance.upgrade();
+                        // --- Flash animation for upgrade button ---
+                        selectedTowerInstance._upgradeFlash = Date.now();
+                        updateUI();
+                    }
+                }
+                // Sell button area
+                if (mx > x - 50 && mx < x + 50 && my > y - 10 && my < y + 22) {
+                    selectedTowerInstance.sell();
+                    selectedTowerInstance = null;
+                }
+                // Prevent click-through to towers or canvas
+                menuClickHandled = true;
+                e.stopImmediatePropagation();
+                e.preventDefault();
+                return;
+            }
+            // If click is outside the menu, close it
+            selectedTowerInstance = null;
+            menuClickHandled = false;
+            e.stopImmediatePropagation();
+            e.preventDefault();
+            return;
+        }
+
+        // --- TOWER PLACEMENT ---
+        if (selectedTower) {
             let onPath = false;
             for(let i=0; i < path.length-1; i++){
                 const p1 = path[i];
                 const p2 = path[i+1];
-                // simple bounding box check
                 if(snappedX > Math.min(p1.x, p2.x) - TILE_SIZE/2 && snappedX < Math.max(p1.x, p2.x) + TILE_SIZE/2 &&
                    snappedY > Math.min(p1.y, p2.y) - TILE_SIZE/2 && snappedY < Math.max(p1.y, p2.y) + TILE_SIZE/2) {
                     onPath = true;
                     break;
                 }
             }
-
-            if(!onPath && socialEnergy >= selectedTower.config.cost) {
+            // Prevent placing on top of another tower
+            let onTower = towers.some(tower =>
+                Math.abs(tower.x - snappedX) < 1 && Math.abs(tower.y - snappedY) < 1
+            );
+            if(!onPath && !onTower && socialEnergy >= selectedTower.config.cost) {
                 socialEnergy -= selectedTower.config.cost;
                 towers.push(new Tower(snappedX, snappedY, selectedTower.type));
                 updateUI();
-                selectedTower = null; // Deselect after placing
+                selectedTower = null;
                 document.querySelectorAll('.tower-button').forEach(b => b.classList.remove('selected'));
+                justPlacedTower = true;
+            }
+            selectedTowerInstance = null;
+            e.stopImmediatePropagation();
+            e.preventDefault();
+            return;
+        }
+
+        // --- TOWER MENU OPENING ---
+        if (justPlacedTower) {
+            justPlacedTower = false;
+            e.stopImmediatePropagation();
+            e.preventDefault();
+            return;
+        }
+        // Not placing, check if clicking a tower
+        selectedTowerInstance = null;
+        for (let tower of towers) {
+            if (Math.abs(tower.x - snappedX) < TILE_SIZE/2 && Math.abs(tower.y - snappedY) < TILE_SIZE/2) {
+                selectedTowerInstance = tower;
+                break;
             }
         }
+        e.stopImmediatePropagation();
+        e.preventDefault();
     });
+
     fullscreenButton.addEventListener('click', () => {
         if (!document.fullscreenElement) {
             document.documentElement.requestFullscreen();
